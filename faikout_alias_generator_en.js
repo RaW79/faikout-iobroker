@@ -1,0 +1,363 @@
+// ================================================================
+// v0.1 (30.08.2026)    https://codeberg.org/RaW07/faikout-projects
+// Developed and tested on ioBroker JavaScript adapter v9.0.18
+// Faikout Alias Generator for ioBroker
+// Run this script once in the JavaScript adapter.
+// It auto-detects the Faikout and creates all alias data points.
+// Aliases are created based on the features active on the device –
+// disabled features are largely skipped.
+// Note: If Faikout settings change (e.g. humidifier enabled/disabled)
+// re-run the script to update the alias data points.
+//
+// PREREQUISITES:
+//   1. The Faikout must already be connected to ioBroker via MQTT
+//      and appear under Admin → Objects as
+//        mqtt-client.0.state.DEVICE_ID.status  (mqtt-client adapter)
+//      or
+//        mqtt.0.state.DEVICE_ID.status          (mqtt adapter)
+//      and be delivering data.
+//   2. In the JavaScript adapter, "Allow object creation" must be enabled:
+//      Admin → Instances → javascript.X
+//      "Allow setObject command" = ON
+//      (The script checks this automatically on start.)
+//
+// CONFIGURATION – adjust these values only:
+// ================================================================
+const FAIKOUT_IP    = '192.168.x.x';   // IP address of the Faikout
+const MQTT_INSTANCE = 'mqtt-client.0';  // MQTT adapter instance
+const ALIAS_NAME    = 'MyAirCon';       // Folder name under alias.0.*
+// ================================================================
+
+'use strict';
+const http = require('http');
+
+// Auto-detect adapter type
+const IS_MQTT_CLIENT = MQTT_INSTANCE.startsWith('mqtt-client.');
+// IS_MQTT_CLIENT = true  → iobroker.mqtt-client (requires custom block)
+// IS_MQTT_CLIENT = false → iobroker.mqtt        (plain state is sufficient)
+
+// ----------------------------------------------------------------
+// Field definitions
+//   writeTopic: 'control'       → command.ID.control  as JSON object
+//               'mode','fan'... → command.ID.<topic>   directly
+//               'setting:autot' → setting.ID.autot     directly
+//               missing         → read-only
+// ----------------------------------------------------------------
+const FIELDS = {
+    power:      { label: 'Power on/off',                  type: 'boolean', writeTopic: 'control',        writeConv: 'JSON.stringify({power:val})',   readConv: 'val?JSON.parse(val).power===true:false' },
+    swingv:     { label: 'Vertical swing',                type: 'boolean', writeTopic: 'control',        writeConv: 'JSON.stringify({swingv:val})',  readConv: 'val?JSON.parse(val).swingv===true:false' },
+    swingh:     { label: 'Horizontal swing',              type: 'boolean', writeTopic: 'control',        writeConv: 'JSON.stringify({swingh:val})',  readConv: 'val?JSON.parse(val).swingh===true:false' },
+    mode:       { label: 'Operating mode (H/C/F/D/A)',    type: 'mixed',   writeTopic: 'mode',           writeConv: null,                           readConv: 'val?JSON.parse(val).mode:null' },
+    fan:        { label: 'Fan mode (e.g. 1-5/A/Q)',       type: 'mixed',   writeTopic: 'fan',            writeConv: null,                           readConv: 'val?JSON.parse(val).fan:null' },
+    econo:      { label: 'Economy mode',                  type: 'boolean', writeTopic: 'econo',          writeConv: 'val?1:0',                      readConv: 'val?JSON.parse(val).econo===true:false' },
+    powerful:   { label: 'Powerful mode',                 type: 'boolean', writeTopic: 'powerful',       writeConv: 'val?1:0',                      readConv: 'val?JSON.parse(val).powerful===true:false' },
+    demand:     { label: 'Demand/compressor load',        type: 'number',  writeTopic: 'demand',         writeConv: null,           unit: '%',       readConv: 'val?parseInt(JSON.parse(val).demand):null' },
+    autot:      { label: 'Target temperature (Faikout)',  type: 'number',  writeTopic: 'setting:autot',  writeConv: null,           unit: '°C',      readConv: 'val?parseFloat(JSON.parse(val).autot):null' },
+    autor:      { label: 'Hysteresis (Faikout)',          type: 'number',  writeTopic: 'setting:autor',  writeConv: null,           unit: '°C',      readConv: 'val?parseFloat(JSON.parse(val).autor):null' },
+    outside:    { label: 'Outdoor temperature',           type: 'number',  unit: '°C',    readConv: 'val?parseFloat(JSON.parse(val).outside):null' },
+    home:       { label: 'Indoor temperature',            type: 'number',  unit: '°C',    readConv: 'val?parseFloat(JSON.parse(val).home):null' },
+    liquid:     { label: 'Refrigerant temperature',       type: 'number',  unit: '°C',    readConv: 'val?parseFloat(JSON.parse(val).liquid):null' },
+    inlet:      { label: 'Inlet temperature',             type: 'number',  unit: '°C',    readConv: 'val?parseFloat(JSON.parse(val).inlet):null' },
+    temp:       { label: 'Setpoint (Daikin internal)',    type: 'number',  unit: '°C',    readConv: 'val?parseFloat(JSON.parse(val).temp):null' },
+    comp:       { label: 'Compressor speed',              type: 'number',  unit: 'Hz',    readConv: 'val?parseFloat(JSON.parse(val).comp):null' },
+    fanrpm:     { label: 'Fan speed',                     type: 'number',  unit: 'RPM',   readConv: 'val?parseFloat(JSON.parse(val).fanrpm):null' },
+    consumption:{ label: 'Power consumption',             type: 'number',  unit: 'W',     readConv: 'val?parseFloat(JSON.parse(val).consumption):null' },
+    Whheating:  { label: 'Heating energy (cumulative)',   type: 'number',  unit: 'Wh',    readConv: 'val?parseInt(JSON.parse(val).Whheating):null' },
+    Whcooling:  { label: 'Cooling energy (cumulative)',   type: 'number',  unit: 'Wh',    readConv: 'val?parseInt(JSON.parse(val).Whcooling):null' },
+    Whoutside:  { label: 'Outdoor unit energy meter',     type: 'number',  unit: 'Wh',    readConv: 'val?parseInt(JSON.parse(val).Whoutside):null' },
+    hum:        { label: 'Humidity',                      type: 'number',  unit: '%',     readConv: 'val?parseFloat(JSON.parse(val).hum):null' },
+    anglev:     { label: 'Vertical vane angle',           type: 'number',  unit: '°',     readConv: 'val?JSON.parse(val).anglev:null' },
+    comfort:    { label: 'Comfort mode',                  type: 'boolean', writeTopic: 'comfort',   writeConv: 'val?1:0', readConv: 'val?JSON.parse(val).comfort===true:false' },
+    streamer:   { label: 'Air purifier (streamer)',       type: 'boolean', writeTopic: 'streamer',  writeConv: 'val?1:0', readConv: 'val?JSON.parse(val).streamer===true:false' },
+    led:        { label: 'LED',                           type: 'boolean', writeTopic: 'led',       writeConv: 'val?1:0', readConv: 'val?JSON.parse(val).led===true:false' },
+    quiet:      { label: 'Quiet mode (outdoor unit)',     type: 'boolean', writeTopic: 'quiet',     writeConv: 'val?1:0', readConv: 'val?JSON.parse(val).quiet===true:false' },
+    humidify:   { label: 'Humidifier (e.g. X/L/S/H/C)',  type: 'mixed',   writeTopic: 'humidify',  writeConv: null,      readConv: 'val?JSON.parse(val).humidify:null' },
+    autoe:      { label: 'Auto mode active',              type: 'boolean', writeTopic: 'autoe',    writeConv: 'val?1:0', readConv: 'val?JSON.parse(val).autoe===true:false' },
+    autop:      { label: 'Auto power on/off active',      type: 'boolean', writeTopic: 'autop',    writeConv: 'val?1:0', readConv: 'val?JSON.parse(val).autop===true:false' },
+    auto0:      { label: 'Timer off time',                type: 'mixed',   writeTopic: 'setting',  writeConv: 'JSON.stringify({auto0:String(val).replace(":","")})',  readConv: 'val?JSON.parse(val).auto0:null' },
+    auto1:      { label: 'Timer on time',                 type: 'mixed',   writeTopic: 'setting',  writeConv: 'JSON.stringify({auto1:String(val).replace(":","")})',  readConv: 'val?JSON.parse(val).auto1:null' },
+    autob:      { label: 'BLE reference device (MAC)',    type: 'mixed',   readConv: 'val?JSON.parse(val).autob:null', bleKey: true },
+    antifreeze: { label: 'Anti-freeze active',            type: 'boolean', readConv: 'val?JSON.parse(val).antifreeze===true:false' },
+    env:        { label: 'Room temperature',              type: 'number',  unit: '°C',    readConv: 'val?parseFloat(JSON.parse(val).env):null' },
+    // env_set: Send room temperature to Faikout (control reference).
+    // IMPORTANT: Must be sent cyclically – the Faikout discards the value
+    // after tcontrol seconds (Faikout setting "Control messages timeout",
+    // default 600 s). Recommendation: send every 30–60 s so the value never expires.
+    env_set:    { label: 'Room temperature (send control reference)', type: 'number', unit: '°C', writeTopic: 'control', writeConv: 'JSON.stringify({env:val})', writeOnly: true },
+    // BLE sensor (optional, only if device reports a BLE sensor)
+    'ble_temp': { label: 'BLE temperature',               type: 'number',  unit: '°C',    readConv: 'val&&JSON.parse(val).ble?parseFloat(JSON.parse(val).ble.temp):null', bleKey: true },
+    'ble_hum':  { label: 'BLE humidity',                  type: 'number',  unit: '%',     readConv: 'val&&JSON.parse(val).ble?parseFloat(JSON.parse(val).ble.hum):null',  bleKey: true },
+    'ble_bat':  { label: 'BLE battery level',             type: 'number',  unit: '%',     readConv: 'val&&JSON.parse(val).ble?parseFloat(JSON.parse(val).ble.bat):null',   bleKey: true },
+    'ble_volt': { label: 'BLE battery voltage',           type: 'number',  unit: 'V',     readConv: 'val&&JSON.parse(val).ble?parseFloat(JSON.parse(val).ble.volt):null',  bleKey: true },
+};
+
+// Fields that are always created even if not detected via o.xyz
+// (sourced directly from the MQTT JSON or synthetic write-only data points)
+const FIELD_WHITELIST = new Set(['comp', 'anglev', 'env_set']);
+
+// ----------------------------------------------------------------
+// Step 1: HTTP GET → extract fields from the WebSocket handler
+//         + check extras page for active optional features
+// ----------------------------------------------------------------
+function fetchDeviceFields(ip) {
+    const fetchPage = (url) => new Promise((resolve, reject) => {
+        const req = http.get(url, (res) => {
+            let html = '';
+            res.on('data', chunk => html += chunk);
+            res.on('end', () => resolve(html));
+        });
+        req.setTimeout(6000, () => { req.destroy(); reject(new Error('Timeout: ' + url)); });
+        req.on('error', reject);
+    });
+
+    return Promise.all([
+        fetchPage(`http://${ip}/`),
+        fetchPage(`http://${ip}/revk-settings?_page=-2`),
+    ]).then(([mainHtml, extrasHtml]) => {
+        const matches = mainHtml.match(/\bo\.([a-zA-Z]\w*)\b/g) || [];
+        const found = new Set(matches.map(m => m.slice(2).toLowerCase()));
+
+        // BLE: only create if bleenable is active
+        const bleEnabled = /id="bleenable"[^>]*checked/.test(extrasHtml);
+        if (bleEnabled && found.has('ble')) {
+            found.add('ble_temp');
+            found.add('ble_hum');
+            found.add('ble_bat');
+        } else {
+            found.delete('ble');
+        }
+
+        // Optional features: remove disabled fields from found
+        for (const key of Object.keys(FIELDS)) {
+            const disabled = new RegExp(`id="no${key}"[^>]*checked`).test(extrasHtml);
+            if (disabled) found.delete(key);
+        }
+
+        // Always add whitelist fields
+        for (const f of FIELD_WHITELIST) found.add(f);
+
+        log(`Device ${ip} reachable – detected fields: ${[...found].join(', ')}`);
+        return found;
+    });
+}
+
+// ----------------------------------------------------------------
+// Step 2: Fetch device ID directly from the device via HTTP (settings page)
+// ----------------------------------------------------------------
+function fetchDeviceId(ip) {
+    return new Promise((resolve, reject) => {
+        const req = http.get(`http://${ip}/revk-settings?_page=0`, (res) => {
+            let html = '';
+            res.on('data', chunk => html += chunk);
+            res.on('end', () => {
+                // Settings page shows the device ID in the <h1> tag: <h1>DEVICE_ID <b...
+                const match = html.match(/<h1>([^\s<]+)/);
+                if (!match) {
+                    reject(new Error('Device ID not found on settings page'));
+                    return;
+                }
+                const deviceId = match[1];
+                log(`Device ID detected: ${deviceId}`);
+                resolve(deviceId);
+            });
+        });
+        req.setTimeout(6000, () => { req.destroy(); reject(new Error('Timeout reading settings: ' + ip)); });
+        req.on('error', reject);
+    });
+}
+
+// ----------------------------------------------------------------
+// mqtt-client: create publish object (command / setting topic)
+// ----------------------------------------------------------------
+async function ensureMqttPublishObject(stateId, mqttTopic, valueType) {
+    const common = {
+        name:  mqttTopic,
+        type:  valueType,
+        read:  true,
+        write: true,
+    };
+
+    if (IS_MQTT_CLIENT) {
+        // mqtt-client requires an explicit custom block with publish:true
+        common.custom = {
+            [MQTT_INSTANCE]: {
+                enabled:        true,
+                topic:          mqttTopic,
+                publish:        true,
+                pubChangesOnly: false,
+                pubAsObject:    false,
+                qos:            0,
+                retain:         false,
+                subscribe:      false,
+                subChangesOnly: false,
+                subAsObject:    false,
+                subQos:         0,
+                setAck:         true,
+            }
+        };
+    }
+    // Standard mqtt adapter publishes all state changes automatically –
+    // no custom block needed, native.topic is sufficient as reference
+
+    await setObjectAsync(stateId, {
+        type: 'state',
+        common,
+        native: { topic: mqttTopic }
+    });
+}
+
+// ----------------------------------------------------------------
+// Step 3: Create alias objects in ioBroker
+// ----------------------------------------------------------------
+async function buildAliases(deviceId, deviceFields) {
+    const readBase = `${MQTT_INSTANCE}.state.${deviceId}.status`;
+    const prefix   = `alias.0.${ALIAS_NAME}`;
+
+    // Create channel (folder)
+    await setObjectAsync(prefix, {
+        type: 'channel',
+        common: { name: `Faikout – ${ALIAS_NAME}` },
+        native: {}
+    });
+    log(`Channel created: ${prefix}`);
+
+    // Collect and create all required mqtt-client publish objects
+    const publishTargets = new Map(); // stateId → { mqttTopic, valueType }
+    for (const [key, def] of Object.entries(FIELDS)) {
+        if (!def.writeTopic) continue;
+        if (!deviceFields.has(key) && !def.bleKey) continue;
+        if (def.bleKey && !deviceFields.has('ble')) continue;
+        let stateId, mqttTopic, valueType;
+        if (def.writeTopic.startsWith('setting:')) {
+            const field = def.writeTopic.split(':')[1];
+            stateId   = `${MQTT_INSTANCE}.setting.${deviceId}.${field}`;
+            mqttTopic = `setting/${deviceId}/${field}`;
+            valueType = def.type;
+        } else if (def.writeTopic === 'setting') {
+            // Base setting topic: setting/ID  (JSON payload, no field suffix)
+            stateId   = `${MQTT_INSTANCE}.setting.${deviceId}._json`;
+            mqttTopic = `setting/${deviceId}`;
+            valueType = 'string';
+        } else {
+            stateId   = `${MQTT_INSTANCE}.command.${deviceId}.${def.writeTopic}`;
+            mqttTopic = `command/${deviceId}/${def.writeTopic}`;
+            valueType = def.writeTopic === 'control' ? 'string' : def.type;
+        }
+        publishTargets.set(stateId, { mqttTopic, valueType });
+    }
+    for (const [stateId, { mqttTopic, valueType }] of publishTargets) {
+        await ensureMqttPublishObject(stateId, mqttTopic, valueType);
+        log(`  ⬆ ${stateId}`);
+    }
+
+    let count = 0;
+    const createdKeys = new Set();
+
+    for (const [key, def] of Object.entries(FIELDS)) {
+        // Only create field if device reports it, BLE is active, or it is whitelisted
+        if (!deviceFields.has(key) && !def.bleKey) continue;
+        if (def.bleKey && !deviceFields.has('ble')) continue;
+
+        const writable = !!def.writeTopic;
+
+        // Determine write target ID
+        let writeId;
+        if (writable) {
+            if (def.writeTopic.startsWith('setting:')) {
+                const settingField = def.writeTopic.split(':')[1];
+                writeId = `${MQTT_INSTANCE}.setting.${deviceId}.${settingField}`;
+            } else if (def.writeTopic === 'setting') {
+                writeId = `${MQTT_INSTANCE}.setting.${deviceId}._json`;
+            } else {
+                writeId = `${MQTT_INSTANCE}.command.${deviceId}.${def.writeTopic}`;
+            }
+        }
+
+        const writeOnly = writable && !!def.writeOnly;
+        const common = {
+            name:  def.label,
+            type:  def.type,
+            read:  !writeOnly,
+            write: writable,
+            alias: {
+                id:   writeOnly ? writeId : (writable ? { read: readBase, write: writeId } : readBase),
+            }
+        };
+        if (!writeOnly)                  common.alias.read    = def.readConv;
+        if (def.unit)                    common.unit          = def.unit;
+        if (writable && def.writeConv)   common.alias.write   = def.writeConv;
+
+        await setObjectAsync(`${prefix}.${key}`, {
+            type: 'state',
+            common,
+            native: {}
+        });
+        log(`  ✓ ${prefix}.${key}  (${def.label})`);
+        createdKeys.add(key);
+        count++;
+    }
+
+    // Remove stale data points – only known FIELDS keys, not manually added ones
+    let removed = 0;
+    for (const key of Object.keys(FIELDS)) {
+        if (!createdKeys.has(key)) {
+            try {
+                await deleteObjectAsync(`${prefix}.${key}`);
+                log(`  🗑 ${prefix}.${key} removed`);
+                removed++;
+            } catch (e) {
+                // Object does not exist – no problem
+            }
+        }
+    }
+
+    log('');
+    log(`✅ Done: ${count} data points created, ${removed} removed – alias.0.${ALIAS_NAME}`);
+    log(`   Device:    http://${FAIKOUT_IP}/`);
+    log(`   Device ID: ${deviceId}`);
+    log(`   Read topic: ${readBase}`);
+}
+
+// ----------------------------------------------------------------
+// Main
+// ----------------------------------------------------------------
+(async function main() {
+    log('═══════════════════════════════════════════');
+    log('Faikout Alias Generator');
+    log(`  Device: http://${FAIKOUT_IP}/`);
+    log(`  MQTT:   ${MQTT_INSTANCE}`);
+    log(`  Alias:  alias.0.${ALIAS_NAME}`);
+    log('═══════════════════════════════════════════');
+
+    try {
+        // Check if setObject is enabled in the JavaScript adapter
+        const jsObj = await getObjectAsync(`system.adapter.javascript.${instance}`);
+        if (!jsObj || !jsObj.native || !jsObj.native.enableSetObject) {
+            log('❌ Prerequisite not met: "Allow object creation" is disabled in the JavaScript adapter.', 'error');
+            log('   Admin → Instances → javascript.' + instance + ' → "Allow setObject command" = ON', 'error');
+            return;
+        }
+
+        // Fetch fields and device ID from the device via HTTP
+        const [deviceFields, deviceId] = await Promise.all([
+            fetchDeviceFields(FAIKOUT_IP),
+            fetchDeviceId(FAIKOUT_IP),
+        ]);
+
+        // Check energy meters via MQTT status – only create if device actually reports them
+        const statusState = await getStateAsync(`${MQTT_INSTANCE}.state.${deviceId}.status`);
+        if (statusState && statusState.val) {
+            try {
+                const json = JSON.parse(statusState.val);
+                for (const key of ['Whoutside', 'Whheating', 'Whcooling']) {
+                    if (json[key] !== undefined) deviceFields.add(key);
+                }
+            } catch (e) { /* ignore JSON errors */ }
+        }
+
+        await buildAliases(deviceId, deviceFields);
+
+    } catch (err) {
+        log('❌ ' + err.message, 'error');
+    }
+})();
