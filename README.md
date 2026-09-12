@@ -26,7 +26,7 @@ The script [`faikout_alias_generator_en.js`](https://codeberg.org/RaW07/faikout-
 ### Prerequisites
 
 - Faikout already connected to IOBroker via MQTT, status topic delivering data
-- IOBroker JavaScript adapter installed
+- [IOBroker JavaScript adapter](https://github.com/ioBroker/ioBroker.javascript) installed
 - In the JavaScript adapter: **"Allow setObject command" = ON**
   (Admin → Instances → javascript.X → Settings)
 
@@ -67,7 +67,7 @@ Das Script [`faikout_alias_generator_ger.js`](https://codeberg.org/RaW07/faikout
 ### Voraussetzungen
 
 - Faikout bereits per MQTT mit IOBroker verbunden, Status-Topic liefert Daten
-- IOBroker JavaScript-Adapter installiert
+- [IOBroker JavaScript-Adapter](https://github.com/ioBroker/ioBroker.javascript) installiert
 - Im JavaScript-Adapter: **„Kommando „setObject" erlauben" = EIN**
   (Admin → Instanzen → javascript.X → Einstellungen)
 
