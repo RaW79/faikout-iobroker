@@ -1,5 +1,5 @@
 // ================================================================
-// v0.1 (30.08.2026)    https://codeberg.org/RaW07/faikout-projects
+// v0.2 (14.10.2026)    https://codeberg.org/RaW07/faikout-projects
 // Entwickelt und getestet auf ioBroker JavaScript-Adapter v9.0.18
 // Faikout Alias-Generator für ioBroker
 // Dieses Script einmalig im JavaScript-Adapter ausführen.
@@ -67,6 +67,7 @@ const FIELDS = {
     Whoutside:  { label: 'Außengerät Energiezähler',  type: 'number',  unit: 'Wh',    readConv: 'val?parseInt(JSON.parse(val).Whoutside):null' },
     hum:        { label: 'Luftfeuchtigkeit',           type: 'number',  unit: '%',     readConv: 'val?parseFloat(JSON.parse(val).hum):null' },
     anglev:     { label: 'Vertikaler Luftwinkel',      type: 'number',  unit: '°',     readConv: 'val?JSON.parse(val).anglev:null' },
+    angleh:     { label: 'Horizontaler Luftwinkel',    type: 'number',  unit: '°',     readConv: 'val?JSON.parse(val).angleh:null' },
     comfort:    { label: 'Comfort-Modus',              type: 'boolean', writeTopic: 'comfort',   writeConv: 'val?1:0', readConv: 'val?JSON.parse(val).comfort===true:false' },
     streamer:   { label: 'Luftreiniger (Streamer)',    type: 'boolean', writeTopic: 'streamer',  writeConv: 'val?1:0', readConv: 'val?JSON.parse(val).streamer===true:false' },
     led:        { label: 'LED',                        type: 'boolean', writeTopic: 'led',       writeConv: 'val?1:0', readConv: 'val?JSON.parse(val).led===true:false' },
@@ -84,6 +85,7 @@ const FIELDS = {
     // nach Ablauf von tcontrol Sekunden (Faikout-Einstellung "Control messages timeout",
     // Standard 600 s). Empfehlung: alle 30–60 s senden, damit der Wert nie abläuft.
     env_set:    { label: 'Raumtemperatur (Regelreferenz senden)', type: 'number', unit: '°C', writeTopic: 'control', writeConv: 'JSON.stringify({env:val})', writeOnly: true },
+    restart:    { label: 'Gerät neu starten',                    type: 'boolean',             writeTopic: 'restart',  writeConv: 'val?1:0',                  writeOnly: true },
     // BLE-Sensor (optional, nur wenn Gerät BLE-Sensor meldet)
     'ble_temp': { label: 'BLE Temperatur',             type: 'number',  unit: '°C',    readConv: 'val&&JSON.parse(val).ble?parseFloat(JSON.parse(val).ble.temp):null', bleKey: true },
     'ble_hum':  { label: 'BLE Luftfeuchtigkeit',       type: 'number',  unit: '%',     readConv: 'val&&JSON.parse(val).ble?parseFloat(JSON.parse(val).ble.hum):null',  bleKey: true },
@@ -93,7 +95,7 @@ const FIELDS = {
 
 // Felder die immer angelegt werden, auch wenn nicht in o.xyz erkannt
 // (kommen aus dem MQTT-JSON oder sind synthetische Schreib-Datenpunkte)
-const FIELD_WHITELIST = new Set(['comp', 'anglev', 'env_set']);
+const FIELD_WHITELIST = new Set(['comp', 'anglev', 'angleh', 'env_set', 'restart']);
 
 // ----------------------------------------------------------------
 // Schritt 1: HTTP GET → Felder aus dem WebSocket-Handler extrahieren
@@ -144,6 +146,11 @@ function fetchDeviceFields(ip) {
 // ----------------------------------------------------------------
 // Schritt 2: GERAETE_ID direkt vom Gerät per HTTP holen (Settings-Seite)
 // ----------------------------------------------------------------
+// Schritt 2b: xgpio-Konfiguration lesen (OLA-GPIO-Mod, Seite 1)
+//             Gibt Array mit 5 Objekten zurück (Index 0–4 für GPIO 1–5):
+//             { set, out, pwm, adc, name }
+//             Löst mit alles-false-Konfig auf wenn Mod nicht vorhanden.
+// ----------------------------------------------------------------
 function fetchGeraeteId(ip) {
     return new Promise((resolve, reject) => {
         const req = http.get(`http://${ip}/revk-settings?_page=0`, (res) => {
@@ -163,6 +170,39 @@ function fetchGeraeteId(ip) {
         });
         req.setTimeout(6000, () => { req.destroy(); reject(new Error('Timeout beim Lesen der Settings: ' + ip)); });
         req.on('error', reject);
+    });
+}
+
+function fetchXgpioConfig(ip) {
+    const empty = () => Array.from({length: 5}, () => ({ set: false, out: false, pwm: false, adc: false, name: '' }));
+    return new Promise((resolve) => {
+        const req = http.get(`http://${ip}/revk-settings?_page=1`, (res) => {
+            let html = '';
+            res.on('data', chunk => html += chunk);
+            res.on('end', () => {
+                const config = [];
+                for (let n = 1; n <= 5; n++) {
+                    const valM = html.match(new RegExp('id="xgpio' + n + '"[^>]*value="([^"]*)"')) ||
+                                 html.match(new RegExp('value="([^"]*)"[^>]*id="xgpio' + n + '"'));
+                    const gpioVal = valM ? valM[1].trim() : '';
+                    const set = gpioVal !== '' && gpioVal !== '0';
+                    const out = new RegExp('id="xgpio' + n + 'out"[^>]*checked').test(html);
+                    const pwm = new RegExp('id="xgpio' + n + 'pwm"[^>]*checked').test(html);
+                    const adc = new RegExp('id="xgpio' + n + 'adc"[^>]*checked').test(html);
+                    const nameM = html.match(new RegExp('id="xgpio' + n + 'name"[^>]*value="([^"]*)"')) ||
+                                  html.match(new RegExp('value="([^"]*)"[^>]*id="xgpio' + n + 'name"'));
+                    const name = nameM ? nameM[1].trim() : '';
+                    config.push({ set, out, pwm, adc, name });
+                }
+                const active = config
+                    .map((c, i) => c.set ? `GPIO${i+1}(${c.pwm?'PWM':c.adc?'ADC':c.out?'OUT':'IN'})` : null)
+                    .filter(Boolean);
+                if (active.length) log(`OLA-GPIO-Mod erkannt: ${active.join(', ')}`);
+                resolve(config);
+            });
+        });
+        req.setTimeout(6000, () => { req.destroy(); resolve(empty()); });
+        req.on('error', () => resolve(empty()));
     });
 }
 
@@ -209,7 +249,7 @@ async function ensureMqttPublishObject(stateId, mqttTopic, valueType) {
 // ----------------------------------------------------------------
 // Schritt 3: Alias-Objekte in ioBroker anlegen
 // ----------------------------------------------------------------
-async function buildAliases(geraeteId, deviceFields) {
+async function buildAliases(geraeteId, deviceFields, xgpioConfig) {
     const readBase = `${MQTT_INSTANCE}.state.${geraeteId}.status`;
     const prefix   = `alias.0.${ALIAS_NAME}`;
 
@@ -311,6 +351,70 @@ async function buildAliases(geraeteId, deviceFields) {
         }
     }
 
+    // ---- OLA-GPIO-Mod: xgpio-Aliase ----
+    const xgpioPrefix   = `${prefix}.xgpio`;
+    const xgpioReadBase = `${MQTT_INSTANCE}.state.${geraeteId}.xgpio`;
+    const createdXgpioKeys = new Set();
+
+    if (xgpioConfig.some(c => c.set)) {
+        await setObjectAsync(xgpioPrefix, {
+            type: 'channel',
+            common: { name: 'Zusätzliche GPIOs (OLA-Mod)' },
+            native: {}
+        });
+        log(`Kanal angelegt: ${xgpioPrefix}`);
+
+        for (let n = 1; n <= 5; n++) {
+            const c = xgpioConfig[n - 1];
+            if (!c.set) continue;
+            const key      = `xgpio${n}`;
+            const label    = c.name || `GPIO ${n}`;
+            const writable = c.out || c.pwm;
+            const type     = (c.pwm || c.adc) ? 'number' : 'boolean';
+            const writeId  = writable ? `${MQTT_INSTANCE}.command.${geraeteId}.${key}` : undefined;
+
+            if (writable) {
+                await ensureMqttPublishObject(writeId, `command/${geraeteId}/${key}`, type);
+                log(`  ⬆ ${writeId}`);
+            }
+
+            const common = {
+                name:  label,
+                type,
+                read:  true,
+                write: writable,
+                alias: {
+                    id:   writable ? { read: xgpioReadBase, write: writeId } : xgpioReadBase,
+                    read: `val?JSON.parse(val).${key}:null`,
+                }
+            };
+            if (c.pwm || c.adc) common.unit = '%';
+            if (writable && !c.pwm) common.alias.write = 'val?1:0';
+
+            await setObjectAsync(`${xgpioPrefix}.${key}`, {
+                type: 'state',
+                common,
+                native: {}
+            });
+            log(`  ✓ ${xgpioPrefix}.${key}  (${label})`);
+            createdXgpioKeys.add(key);
+            count++;
+        }
+    }
+
+    // Veraltete xgpio-Aliase entfernen
+    for (let n = 1; n <= 5; n++) {
+        const key = `xgpio${n}`;
+        if (!createdXgpioKeys.has(key)) {
+            try { await deleteObjectAsync(`${xgpioPrefix}.${key}`); log(`  🗑 ${xgpioPrefix}.${key} entfernt`); removed++; }
+            catch (e) { /* existiert nicht */ }
+        }
+    }
+    if (createdXgpioKeys.size === 0) {
+        try { await deleteObjectAsync(xgpioPrefix); }
+        catch (e) { /* existiert nicht */ }
+    }
+
     log('');
     log(`✅ Fertig: ${count} Datenpunkte angelegt, ${removed} entfernt – alias.0.${ALIAS_NAME}`);
     log(`   Gerät:      http://${FAIKOUT_IP}/`);
@@ -338,10 +442,11 @@ async function buildAliases(geraeteId, deviceFields) {
             return;
         }
 
-        // Felder und GERAETE_ID beide direkt vom Gerät per HTTP
-        const [deviceFields, geraeteId] = await Promise.all([
+        // Felder, GERAETE_ID und xgpio-Konfiguration direkt vom Gerät per HTTP
+        const [deviceFields, geraeteId, xgpioConfig] = await Promise.all([
             fetchDeviceFields(FAIKOUT_IP),
             fetchGeraeteId(FAIKOUT_IP),
+            fetchXgpioConfig(FAIKOUT_IP),
         ]);
 
         // Energiezähler per MQTT-Status prüfen – nur anlegen wenn Gerät sie tatsächlich liefert
@@ -355,7 +460,7 @@ async function buildAliases(geraeteId, deviceFields) {
             } catch (e) { /* JSON-Fehler ignorieren */ }
         }
 
-        await buildAliases(geraeteId, deviceFields);
+        await buildAliases(geraeteId, deviceFields, xgpioConfig);
 
     } catch (err) {
         log('❌ ' + err.message, 'error');
