@@ -1,5 +1,5 @@
 // ================================================================
-// v0.2 (14.10.2026)    https://codeberg.org/RaW07/faikout-projects
+// v0.3 (14.10.2026)    https://codeberg.org/RaW07/faikout-projects
 // Entwickelt und getestet auf ioBroker JavaScript-Adapter v9.0.18
 // Faikout Alias-Generator für ioBroker
 // Dieses Script einmalig im JavaScript-Adapter ausführen.
@@ -157,15 +157,16 @@ function fetchGeraeteId(ip) {
             let html = '';
             res.on('data', chunk => html += chunk);
             res.on('end', () => {
-                // Die Settings-Seite zeigt die Geräte-ID im <h1>-Tag: <h1>GERAETE_ID <b...
-                const match = html.match(/<h1>([^\s<]+)/);
+                // Settings-Seite zeigt: <h1>GERAETE_ID <b>AppName</b>...
+                const match = html.match(/<h1>([^\s<]+)[^<]*<b>([^<]+)/);
                 if (!match) {
                     reject(new Error('GERAETE_ID nicht in Settings-Seite gefunden'));
                     return;
                 }
                 const geraeteId = match[1];
-                log(`GERAETE_ID erkannt: ${geraeteId}`);
-                resolve(geraeteId);
+                const appName   = match[2] || '';
+                log(`GERAETE_ID erkannt: ${geraeteId}  App: ${appName}`);
+                resolve({ geraeteId, appName });
             });
         });
         req.setTimeout(6000, () => { req.destroy(); reject(new Error('Timeout beim Lesen der Settings: ' + ip)); });
@@ -204,6 +205,76 @@ function fetchXgpioConfig(ip) {
         req.setTimeout(6000, () => { req.destroy(); resolve(empty()); });
         req.on('error', () => resolve(empty()));
     });
+}
+
+// ----------------------------------------------------------------
+// Schritt 2c: MQTT-Topic-Konfiguration vom Gerät lesen (Seite -3)
+//             Gibt Defaults zurück wenn Seite nicht erreichbar.
+// ----------------------------------------------------------------
+function fetchTopicConfig(ip) {
+    const defaults = { topiccommand: 'command', topicsetting: 'setting', topicstate: 'state', prefixapp: false, prefixhost: false };
+    return new Promise((resolve) => {
+        const req = http.get(`http://${ip}/revk-settings?_page=-3`, (res) => {
+            let html = '';
+            res.on('data', chunk => html += chunk);
+            res.on('end', () => {
+                function val(id) {
+                    const m = html.match(new RegExp('id="' + id + '"[^>]*value="([^"]*)"')) ||
+                              html.match(new RegExp('value="([^"]*)"[^>]*id="' + id + '"'));
+                    return m ? m[1].trim() : null;
+                }
+                const topiccommand = val('topiccommand') || defaults.topiccommand;
+                const topicsetting = val('topicsetting') || defaults.topicsetting;
+                const topicstate   = val('topicstate')   || defaults.topicstate;
+                const prefixapp    = new RegExp('id="prefixapp"[^>]*checked').test(html);
+                const prefixhost   = new RegExp('id="prefixhost"[^>]*checked').test(html);
+                const cfg = { topiccommand, topicsetting, topicstate, prefixapp, prefixhost };
+                const nonDefault = topiccommand !== 'command' || topicsetting !== 'setting' ||
+                                   topicstate !== 'state' || prefixapp || prefixhost;
+                if (nonDefault) log(`⚠ Abweichende MQTT-Topics erkannt: ${JSON.stringify(cfg)}`);
+                resolve(cfg);
+            });
+        });
+        req.setTimeout(6000, () => { req.destroy(); resolve(defaults); });
+        req.on('error', () => resolve(defaults));
+    });
+}
+
+// ----------------------------------------------------------------
+// MQTT-Topic-Strings und ioBroker-Objekt-IDs berechnen
+// gemäß RevK-Topic-Logik (revk.c revk_topic)
+// ----------------------------------------------------------------
+function buildTopicPaths(geraeteId, appName, topicConfig) {
+    const { topiccommand, topicsetting, topicstate, prefixapp, prefixhost } = topicConfig;
+
+    function makeTopic(name, suffix) {
+        const parts = [];
+        if (prefixhost) {
+            if (prefixapp && appName) parts.push(appName);
+            parts.push(geraeteId);
+            if (name) parts.push(name);
+        } else {
+            if (name) parts.push(name);
+            if (prefixapp && appName) parts.push(appName);
+            parts.push(geraeteId);
+        }
+        if (suffix) parts.push(suffix);
+        return parts.join('/');
+    }
+
+    function toId(topic) { return `${MQTT_INSTANCE}.${topic.replace(/\//g, '.')}`; }
+
+    return {
+        statusTopic:      makeTopic(topicstate,   'status'),
+        statusId:         toId(makeTopic(topicstate,   'status')),
+        xgpioId:          toId(makeTopic(topicstate,   'xgpio')),
+        commandId:        (f) => toId(makeTopic(topiccommand, f)),
+        commandTopic:     (f) =>     makeTopic(topiccommand, f),
+        settingId:        (f) => toId(makeTopic(topicsetting, f)),
+        settingTopic:     (f) =>     makeTopic(topicsetting, f),
+        settingJsonId:         toId(makeTopic(topicsetting, null)),
+        settingJsonTopic:          makeTopic(topicsetting, null),
+    };
 }
 
 // ----------------------------------------------------------------
@@ -249,8 +320,9 @@ async function ensureMqttPublishObject(stateId, mqttTopic, valueType) {
 // ----------------------------------------------------------------
 // Schritt 3: Alias-Objekte in ioBroker anlegen
 // ----------------------------------------------------------------
-async function buildAliases(geraeteId, deviceFields, xgpioConfig) {
-    const readBase = `${MQTT_INSTANCE}.state.${geraeteId}.status`;
+async function buildAliases(geraeteId, deviceFields, xgpioConfig, topicConfig, appName) {
+    const topics   = buildTopicPaths(geraeteId, appName, topicConfig);
+    const readBase = topics.statusId;
     const prefix   = `alias.0.${ALIAS_NAME}`;
 
     // Kanal (Ordner) anlegen
@@ -270,17 +342,17 @@ async function buildAliases(geraeteId, deviceFields, xgpioConfig) {
         let stateId, mqttTopic, valueType;
         if (def.writeTopic.startsWith('setting:')) {
             const field = def.writeTopic.split(':')[1];
-            stateId   = `${MQTT_INSTANCE}.setting.${geraeteId}.${field}`;
-            mqttTopic = `setting/${geraeteId}/${field}`;
+            stateId   = topics.settingId(field);
+            mqttTopic = topics.settingTopic(field);
             valueType = def.type;
         } else if (def.writeTopic === 'setting') {
             // Basis-Setting-Topic: setting/ID  (JSON-Payload, kein Feldsuffix)
-            stateId   = `${MQTT_INSTANCE}.setting.${geraeteId}._json`;
-            mqttTopic = `setting/${geraeteId}`;
+            stateId   = topics.settingJsonId;
+            mqttTopic = topics.settingJsonTopic;
             valueType = 'string';
         } else {
-            stateId   = `${MQTT_INSTANCE}.command.${geraeteId}.${def.writeTopic}`;
-            mqttTopic = `command/${geraeteId}/${def.writeTopic}`;
+            stateId   = topics.commandId(def.writeTopic);
+            mqttTopic = topics.commandTopic(def.writeTopic);
             valueType = def.writeTopic === 'control' ? 'string' : def.type;
         }
         publishTargets.set(stateId, { mqttTopic, valueType });
@@ -304,12 +376,11 @@ async function buildAliases(geraeteId, deviceFields, xgpioConfig) {
         let writeId;
         if (writable) {
             if (def.writeTopic.startsWith('setting:')) {
-                const settingField = def.writeTopic.split(':')[1];
-                writeId = `${MQTT_INSTANCE}.setting.${geraeteId}.${settingField}`;
+                writeId = topics.settingId(def.writeTopic.split(':')[1]);
             } else if (def.writeTopic === 'setting') {
-                writeId = `${MQTT_INSTANCE}.setting.${geraeteId}._json`;
+                writeId = topics.settingJsonId;
             } else {
-                writeId = `${MQTT_INSTANCE}.command.${geraeteId}.${def.writeTopic}`;
+                writeId = topics.commandId(def.writeTopic);
             }
         }
 
@@ -353,7 +424,7 @@ async function buildAliases(geraeteId, deviceFields, xgpioConfig) {
 
     // ---- OLA-GPIO-Mod: xgpio-Aliase ----
     const xgpioPrefix   = `${prefix}.xgpio`;
-    const xgpioReadBase = `${MQTT_INSTANCE}.state.${geraeteId}.xgpio`;
+    const xgpioReadBase = topics.xgpioId;
     const createdXgpioKeys = new Set();
 
     if (xgpioConfig.some(c => c.set)) {
@@ -371,10 +442,10 @@ async function buildAliases(geraeteId, deviceFields, xgpioConfig) {
             const label    = c.name || `GPIO ${n}`;
             const writable = c.out || c.pwm;
             const type     = (c.pwm || c.adc) ? 'number' : 'boolean';
-            const writeId  = writable ? `${MQTT_INSTANCE}.command.${geraeteId}.${key}` : undefined;
+            const writeId  = writable ? topics.commandId(key) : undefined;
 
             if (writable) {
-                await ensureMqttPublishObject(writeId, `command/${geraeteId}/${key}`, type);
+                await ensureMqttPublishObject(writeId, topics.commandTopic(key), type);
                 log(`  ⬆ ${writeId}`);
             }
 
@@ -419,7 +490,7 @@ async function buildAliases(geraeteId, deviceFields, xgpioConfig) {
     log(`✅ Fertig: ${count} Datenpunkte angelegt, ${removed} entfernt – alias.0.${ALIAS_NAME}`);
     log(`   Gerät:      http://${FAIKOUT_IP}/`);
     log(`   GERAETE_ID: ${geraeteId}`);
-    log(`   Lese-Topic: ${readBase}`);
+    log(`   Lese-Topic: ${topics.statusTopic}`);
 }
 
 // ----------------------------------------------------------------
@@ -442,15 +513,17 @@ async function buildAliases(geraeteId, deviceFields, xgpioConfig) {
             return;
         }
 
-        // Felder, GERAETE_ID und xgpio-Konfiguration direkt vom Gerät per HTTP
-        const [deviceFields, geraeteId, xgpioConfig] = await Promise.all([
+        // Felder, GERAETE_ID, xgpio-Konfiguration und Topic-Konfiguration direkt vom Gerät per HTTP
+        const [deviceFields, { geraeteId, appName }, xgpioConfig, topicConfig] = await Promise.all([
             fetchDeviceFields(FAIKOUT_IP),
             fetchGeraeteId(FAIKOUT_IP),
             fetchXgpioConfig(FAIKOUT_IP),
+            fetchTopicConfig(FAIKOUT_IP),
         ]);
 
         // Energiezähler per MQTT-Status prüfen – nur anlegen wenn Gerät sie tatsächlich liefert
-        const statusState = await getStateAsync(`${MQTT_INSTANCE}.state.${geraeteId}.status`);
+        const topics      = buildTopicPaths(geraeteId, appName, topicConfig);
+        const statusState = await getStateAsync(topics.statusId);
         if (statusState && statusState.val) {
             try {
                 const json = JSON.parse(statusState.val);
@@ -460,7 +533,7 @@ async function buildAliases(geraeteId, deviceFields, xgpioConfig) {
             } catch (e) { /* JSON-Fehler ignorieren */ }
         }
 
-        await buildAliases(geraeteId, deviceFields, xgpioConfig);
+        await buildAliases(geraeteId, deviceFields, xgpioConfig, topicConfig, appName);
 
     } catch (err) {
         log('❌ ' + err.message, 'error');
