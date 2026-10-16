@@ -28,8 +28,15 @@ const MQTT_INSTANCE = 'mqtt-client.0';  // MQTT-Adapter Instanz
 const ALIAS_NAME    = 'MeineKlima';     // Ordnername in alias.0.*
 
 // ---- Optional: Faikout Konfigurationsparameter per MQTT ----
-// CREATE_CONFIG_ALIASES = true: legt Unterordner mit schreibbaren
-// Aliases für Faikout-Settings an (alle write-only).
+// CREATE_CONFIG_ALIASES = true: legt einen Unterordner mit schreibbaren
+// Aliases für Faikout-Einstellungen an.
+// WICHTIG: Diese Aliases sind NUR SCHREIBBAR. Konfigurationsparameter
+// sind NICHT in der Faikout MQTT-Statusmeldung enthalten, daher kann
+// ioBroker den aktuellen Wert nicht auslesen. Der Datenpunkt zeigt immer
+// den zuletzt von ioBroker geschriebenen Wert – wenn du eine Einstellung
+// über die Faikout-Weboberfläche änderst, ist der Datenpunkt nicht mehr
+// aktuell.
+// Die Faikout-Weboberfläche ist die maßgebliche Quelle für aktuelle Werte.
 // Script nach Änderung eines Toggles erneut ausführen.
 const CREATE_CONFIG_ALIASES = false;
 const CONFIG_ALIAS_NAME     = 'Config'; // Unterordner: alias.0.ALIAS_NAME.Config

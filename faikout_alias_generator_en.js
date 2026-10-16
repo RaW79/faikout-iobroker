@@ -29,7 +29,13 @@ const ALIAS_NAME    = 'MyAirCon';       // Folder name under alias.0.*
 
 // ---- Optional: Faikout configuration parameters via MQTT ----
 // Set CREATE_CONFIG_ALIASES = true to create a sub-folder with
-// writable aliases for Faikout settings (all write-only).
+// writable aliases for Faikout settings.
+// IMPORTANT: These aliases are WRITE-ONLY. Configuration parameters
+// are not included in the Faikout MQTT status message, so ioBroker
+// cannot read back the current value. The data point always shows
+// the last value written by ioBroker – if you change a setting via
+// the Faikout web UI, the data point will be out of sync.
+// Use the Faikout web UI as the authoritative source for current values.
 // Re-run the script after changing any toggle below.
 const CREATE_CONFIG_ALIASES = false;
 const CONFIG_ALIAS_NAME     = 'Config'; // Sub-folder: alias.0.ALIAS_NAME.Config
