@@ -45,6 +45,24 @@ const ALIAS_NAME    = 'MeineKlima';     // Folder name under alias.0.*
 
 For a second unit: run the script again with a different IP and `ALIAS_NAME`.
 
+### Optional: Faikout configuration parameters
+
+Set `CREATE_CONFIG_ALIASES = true` to additionally create a sub-folder (default: `alias.0.<name>.Config`) with writable aliases for Faikout settings such as `heatback`, `coolback`, `tcontrol` and others. Each parameter can be individually enabled or disabled via `CONFIG_FIELDS_ENABLE`.
+
+```js
+const CREATE_CONFIG_ALIASES = true;
+const CONFIG_ALIAS_NAME     = 'Config';
+
+const CONFIG_FIELDS_ENABLE = {
+    heatback: true,   // Heat pull-back (°C)
+    coolback: true,   // Cool pull-back (°C)
+    tcontrol: true,   // Control timeout (s)
+    // ...
+};
+```
+
+> **Note:** These aliases are **write-only**. Faikout does not include configuration parameters in its MQTT status message, so ioBroker cannot read back the current value. The data point always reflects the last value written by ioBroker. Use the Faikout web UI as the authoritative source for current values.
+
 ---
 
 ## Deutsch
@@ -85,6 +103,24 @@ const ALIAS_NAME    = 'MeineKlima';     // Ordnername in alias.0.*
 3. Script einmalig ausführen – die Datenpunkte erscheinen sofort unter `alias.0.<Name>`
 
 Für eine zweite Klimaanlage: Script mit anderer IP und anderem `ALIAS_NAME` erneut ausführen.
+
+### Optional: Faikout Konfigurationsparameter
+
+Mit `CREATE_CONFIG_ALIASES = true` wird zusätzlich ein Unterordner (Standard: `alias.0.<Name>.Config`) mit schreibbaren Aliases für Faikout-Einstellungen wie `heatback`, `coolback`, `tcontrol` u.a. angelegt. Jeder Parameter kann über `CONFIG_FIELDS_ENABLE` einzeln aktiviert werden.
+
+```js
+const CREATE_CONFIG_ALIASES = true;
+const CONFIG_ALIAS_NAME     = 'Config';
+
+const CONFIG_FIELDS_ENABLE = {
+    heatback: true,   // Heat pull-back (°C)
+    coolback: true,   // Cool pull-back (°C)
+    tcontrol: true,   // Control-Timeout (s)
+    // ...
+};
+```
+
+> **Hinweis:** Diese Aliases sind **nur schreibbar**. Konfigurationsparameter sind nicht in der Faikout MQTT-Statusmeldung enthalten, daher kann ioBroker den aktuellen Wert nicht auslesen. Der Datenpunkt zeigt immer den zuletzt von ioBroker geschriebenen Wert. Die Faikout-Weboberfläche bleibt die maßgebliche Quelle für aktuelle Werte.
 
 ### Extras – Visualisierung
 
