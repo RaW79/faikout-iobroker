@@ -1,5 +1,5 @@
 // ================================================================
-// v0.3 (14.10.2026)    https://codeberg.org/RaW07/faikout-projects
+// v0.4 (16.10.2026)    https://codeberg.org/RaW07/faikout-projects
 // Entwickelt und getestet auf ioBroker JavaScript-Adapter v9.0.18
 // Faikout Alias-Generator für ioBroker
 // Dieses Script einmalig im JavaScript-Adapter ausführen.
@@ -26,6 +26,32 @@
 const FAIKOUT_IP    = '192.168.x.x';   // IP-Adresse des Faikout
 const MQTT_INSTANCE = 'mqtt-client.0';  // MQTT-Adapter Instanz
 const ALIAS_NAME    = 'MeineKlima';     // Ordnername in alias.0.*
+
+// ---- Optional: Faikout Konfigurationsparameter per MQTT ----
+// CREATE_CONFIG_ALIASES = true: legt Unterordner mit schreibbaren
+// Aliases für Faikout-Settings an (alle write-only).
+// Script nach Änderung eines Toggles erneut ausführen.
+const CREATE_CONFIG_ALIASES = false;
+const CONFIG_ALIAS_NAME     = 'Config'; // Unterordner: alias.0.ALIAS_NAME.Config
+
+const CONFIG_FIELDS_ENABLE = {
+    heatback:   true,   // Heat pull-back (°C)          – Heizen nach Zielerreichung reduzieren
+    heatover:   true,   // Heat push-over (°C)          – Extra-Push vor Zieltemperatur beim Heizen
+    coolback:   true,   // Cool pull-back (°C)          – Kühlen nach Zielerreichung reduzieren
+    coolover:   true,   // Cool push-over (°C)          – Extra-Push vor Zieltemperatur beim Kühlen
+    tcontrol:   true,   // Control-Timeout (s)          – Gültigkeitsfenster für env_set
+    thermref:   false,  // Inlet/Home-Blend (%)         – 0 = nur Home, 100 = nur Inlet
+    tmin:       false,  // Min-Temperaturgrenze (°C)
+    tmax:       false,  // Max-Temperaturgrenze (°C)
+    tcoolmin:   false,  // Min-Temperaturgrenze Kühlen (°C)
+    theatmax:   false,  // Max-Temperaturgrenze Heizen (°C)
+    frosttemp:  false,  // Frostschutztemperatur (°C)
+    minoutside: false,  // Min-Außentemperatur für Betrieb (°C)
+    switchtemp: false,  // Schaltpunkt-Offset (°C)
+    pushtemp:   false,  // Push-Offset (°C)
+    reporting:  false,  // Status-Reportintervall (s)
+    lockmode:   false,  // Heiz-/Kühlmodus in Auto sperren
+};
 // ================================================================
 
 'use strict';
@@ -91,6 +117,28 @@ const FIELDS = {
     'ble_hum':  { label: 'BLE Luftfeuchtigkeit',       type: 'number',  unit: '%',     readConv: 'val&&JSON.parse(val).ble?parseFloat(JSON.parse(val).ble.hum):null',  bleKey: true },
     'ble_bat':  { label: 'BLE Batteriestand',          type: 'number',  unit: '%',     readConv: 'val&&JSON.parse(val).ble?parseFloat(JSON.parse(val).ble.bat):null',   bleKey: true },
     'ble_volt': { label: 'BLE Batteriespannung',       type: 'number',  unit: 'V',     readConv: 'val&&JSON.parse(val).ble?parseFloat(JSON.parse(val).ble.volt):null',  bleKey: true },
+};
+
+// ----------------------------------------------------------------
+// Konfigurationsparameter-Definitionen (alle write-only – nicht im Status-JSON)
+// ----------------------------------------------------------------
+const CONFIG_FIELDS_DEF = {
+    heatback:   { label: 'Heat pull-back',                  type: 'number',  unit: '°C', writeConv: null },
+    heatover:   { label: 'Heat push-over',                  type: 'number',  unit: '°C', writeConv: null },
+    coolback:   { label: 'Cool pull-back',                  type: 'number',  unit: '°C', writeConv: null },
+    coolover:   { label: 'Cool push-over',                  type: 'number',  unit: '°C', writeConv: null },
+    tcontrol:   { label: 'Control-Timeout',                 type: 'number',  unit: 's',  writeConv: null },
+    thermref:   { label: 'Inlet/Home-Blend-Verhältnis',     type: 'number',  unit: '%',  writeConv: null },
+    tmin:       { label: 'Min-Temperaturgrenze',            type: 'number',  unit: '°C', writeConv: null },
+    tmax:       { label: 'Max-Temperaturgrenze',            type: 'number',  unit: '°C', writeConv: null },
+    tcoolmin:   { label: 'Min-Temperaturgrenze Kühlen',     type: 'number',  unit: '°C', writeConv: null },
+    theatmax:   { label: 'Max-Temperaturgrenze Heizen',     type: 'number',  unit: '°C', writeConv: null },
+    frosttemp:  { label: 'Frostschutztemperatur',           type: 'number',  unit: '°C', writeConv: null },
+    minoutside: { label: 'Min-Außentemperatur',             type: 'number',  unit: '°C', writeConv: null },
+    switchtemp: { label: 'Schaltpunkt-Offset',              type: 'number',  unit: '°C', writeConv: null },
+    pushtemp:   { label: 'Push-Offset',                     type: 'number',  unit: '°C', writeConv: null },
+    reporting:  { label: 'Status-Reportintervall',          type: 'number',  unit: 's',  writeConv: null },
+    lockmode:   { label: 'Heiz-/Kühlmodus sperren',         type: 'boolean',             writeConv: 'val?1:0' },
 };
 
 // Felder die immer angelegt werden, auch wenn nicht in o.xyz erkannt
@@ -483,6 +531,57 @@ async function buildAliases(geraeteId, deviceFields, xgpioConfig, topicConfig, a
     }
     if (createdXgpioKeys.size === 0) {
         try { await deleteObjectAsync(xgpioPrefix); }
+        catch (e) { /* existiert nicht */ }
+    }
+
+    // ---- Config-Aliase (optional) ----
+    const configPrefix = `${prefix}.${CONFIG_ALIAS_NAME}`;
+    const createdConfigKeys = new Set();
+
+    if (CREATE_CONFIG_ALIASES) {
+        await setObjectAsync(configPrefix, {
+            type: 'channel',
+            common: { name: `Faikout Konfig – ${ALIAS_NAME}` },
+            native: {}
+        });
+        log(`Kanal angelegt: ${configPrefix}`);
+
+        for (const [key, def] of Object.entries(CONFIG_FIELDS_DEF)) {
+            if (!CONFIG_FIELDS_ENABLE[key]) continue;
+            const writeId = topics.settingId(key);
+            await ensureMqttPublishObject(writeId, topics.settingTopic(key), def.type === 'boolean' ? 'number' : def.type);
+            log(`  ⬆ ${writeId}`);
+
+            const common = {
+                name:  def.label,
+                type:  def.type,
+                read:  false,
+                write: true,
+                alias: { id: writeId }
+            };
+            if (def.unit)      common.unit        = def.unit;
+            if (def.writeConv) common.alias.write  = def.writeConv;
+
+            await setObjectAsync(`${configPrefix}.${key}`, {
+                type: 'state',
+                common,
+                native: {}
+            });
+            log(`  ✓ ${configPrefix}.${key}  (${def.label})`);
+            createdConfigKeys.add(key);
+            count++;
+        }
+    }
+
+    // Veraltete Config-Aliase entfernen
+    for (const key of Object.keys(CONFIG_FIELDS_DEF)) {
+        if (!createdConfigKeys.has(key)) {
+            try { await deleteObjectAsync(`${configPrefix}.${key}`); log(`  🗑 ${configPrefix}.${key} entfernt`); removed++; }
+            catch (e) { /* existiert nicht */ }
+        }
+    }
+    if (createdConfigKeys.size === 0) {
+        try { await deleteObjectAsync(configPrefix); }
         catch (e) { /* existiert nicht */ }
     }
 
