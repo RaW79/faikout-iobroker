@@ -42,22 +42,22 @@ const CREATE_CONFIG_ALIASES = false;
 const CONFIG_ALIAS_NAME     = 'Config'; // Unterordner: alias.0.ALIAS_NAME.Config
 
 const CONFIG_FIELDS_ENABLE = {
-    heatback:   true,   // Heat pull-back (°C)          – Heizen nach Zielerreichung reduzieren
-    heatover:   true,   // Heat push-over (°C)          – Extra-Push vor Zieltemperatur beim Heizen
-    coolback:   true,   // Cool pull-back (°C)          – Kühlen nach Zielerreichung reduzieren
-    coolover:   true,   // Cool push-over (°C)          – Extra-Push vor Zieltemperatur beim Kühlen
-    tcontrol:   true,   // Control-Timeout (s)          – Gültigkeitsfenster für env_set
-    thermref:   false,  // Inlet/Home-Blend (%)         – 0 = nur Home, 100 = nur Inlet
-    tmin:       false,  // Min-Temperaturgrenze (°C)
-    tmax:       false,  // Max-Temperaturgrenze (°C)
-    tcoolmin:   false,  // Min-Temperaturgrenze Kühlen (°C)
-    theatmax:   false,  // Max-Temperaturgrenze Heizen (°C)
-    frosttemp:  false,  // Frostschutztemperatur (°C)
-    minoutside: false,  // Min-Außentemperatur für Betrieb (°C)
-    switchtemp: false,  // Schaltpunkt-Offset (°C)
-    pushtemp:   false,  // Push-Offset (°C)
-    reporting:  false,  // Status-Reportintervall (s)
-    lockmode:   false,  // Heiz-/Kühlmodus in Auto sperren
+    heatback:   true,
+    heatover:   true,
+    coolback:   true,
+    coolover:   true,
+    tcontrol:   true,
+    thermref:   false,
+    tmin:       false,
+    tmax:       false,
+    tcoolmin:   false,
+    theatmax:   false,
+    frosttemp:  false,
+    minoutside: false,
+    switchtemp: false,
+    pushtemp:   false,
+    reporting:  false,
+    lockmode:   false,
 };
 // ================================================================
 

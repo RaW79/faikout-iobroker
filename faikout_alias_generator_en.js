@@ -41,22 +41,22 @@ const CREATE_CONFIG_ALIASES = false;
 const CONFIG_ALIAS_NAME     = 'Config'; // Sub-folder: alias.0.ALIAS_NAME.Config
 
 const CONFIG_FIELDS_ENABLE = {
-    heatback:   true,   // Heat pull-back (°C)          – reduce heating after target reached
-    heatover:   true,   // Heat push-over (°C)          – extra push before target in heating
-    coolback:   true,   // Cool pull-back (°C)          – reduce cooling after target reached
-    coolover:   true,   // Cool push-over (°C)          – extra push before target in cooling
-    tcontrol:   true,   // Control message timeout (s)  – env_set validity window
-    thermref:   false,  // Inlet/home blend ratio (%)   – 0 = home only, 100 = inlet only
-    tmin:       false,  // Min temperature limit (°C)
-    tmax:       false,  // Max temperature limit (°C)
-    tcoolmin:   false,  // Min temperature limit for cooling (°C)
-    theatmax:   false,  // Max temperature limit for heating (°C)
-    frosttemp:  false,  // Frost protection temperature (°C)
-    minoutside: false,  // Min outdoor temperature for operation (°C)
-    switchtemp: false,  // Switch-point offset (°C)
-    pushtemp:   false,  // Push-point offset (°C)
-    reporting:  false,  // Status report interval (s)
-    lockmode:   false,  // Lock heating/cooling mode in auto
+    heatback:   true,
+    heatover:   true,
+    coolback:   true,
+    coolover:   true,
+    tcontrol:   true,
+    thermref:   false,
+    tmin:       false,
+    tmax:       false,
+    tcoolmin:   false,
+    theatmax:   false,
+    frosttemp:  false,
+    minoutside: false,
+    switchtemp: false,
+    pushtemp:   false,
+    reporting:  false,
+    lockmode:   false,
 };
 // ================================================================
 
