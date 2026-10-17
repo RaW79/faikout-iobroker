@@ -47,17 +47,17 @@ const CONFIG_FIELDS_ENABLE = {
     coolback:   true,   // Cool pull-back (°C)
     coolover:   true,   // Cool push-over (°C)
     tcontrol:   true,   // Control-Timeout (s)
-    thermref:   false,  // Inlet/Home-Blend (%)
-    tmin:       false,  // Min-Temperatur (°C)
-    tmax:       false,  // Max-Temperatur (°C)
-    tcoolmin:   false,  // Min-Temperatur Kühlen (°C)
-    theatmax:   false,  // Max-Temperatur Heizen (°C)
-    frosttemp:  false,  // Frostschutz (°C)
-    minoutside: false,  // Min-Außentemperatur (°C)
-    switchtemp: false,  // Schaltpunkt-Offset (°C)
-    pushtemp:   false,  // Push-Offset (°C)
-    reporting:  false,  // Report-Intervall (s)
-    lockmode:   false,  // Heiz-/Kühlmodus sperren
+    thermref:   true,   // Inlet/Home-Blend (%)
+    tmin:       true,   // Min-Temperatur (°C)
+    tmax:       true,   // Max-Temperatur (°C)
+    tcoolmin:   true,   // Min-Temperatur Kühlen (°C)
+    theatmax:   true,   // Max-Temperatur Heizen (°C)
+    frosttemp:  true,   // Frostschutz (°C)
+    minoutside: true,   // Min-Außentemperatur (°C)
+    switchtemp: true,   // Schaltpunkt-Offset (°C)
+    pushtemp:   true,   // Push-Offset (°C)
+    reporting:  true,   // Report-Intervall (s)
+    lockmode:   true,   // Heiz-/Kühlmodus sperren
 };
 // ================================================================
 
