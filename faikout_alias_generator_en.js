@@ -211,14 +211,16 @@ function fetchDeviceId(ip) {
             let html = '';
             res.on('data', chunk => html += chunk);
             res.on('end', () => {
-                // Settings page shows: <h1>DEVICE_ID <b>AppName</b>...
-                const match = html.match(/<h1>([^\s<]+)[^<]*<b>([^<]+)/);
+                // Settings page: <h1>DEVICE_ID <b id=_msg ...>Status</b>
+                // AppName in <address>...<a...>Home</a> AppName<small>-Variant</small>
+                const match = html.match(/<h1>([^\s<]+)/);
                 if (!match) {
                     reject(new Error('Device ID not found on settings page'));
                     return;
                 }
                 const deviceId = match[1];
-                const appName  = match[2] || '';
+                const appMatch = html.match(/Home<\/a>\s+([^\s<]+)<small>/);
+                const appName  = appMatch ? appMatch[1] : '';
                 log(`Device ID detected: ${deviceId}  App: ${appName}`);
                 resolve({ deviceId, appName });
             });

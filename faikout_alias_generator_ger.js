@@ -212,14 +212,16 @@ function fetchGeraeteId(ip) {
             let html = '';
             res.on('data', chunk => html += chunk);
             res.on('end', () => {
-                // Settings-Seite zeigt: <h1>GERAETE_ID <b>AppName</b>...
-                const match = html.match(/<h1>([^\s<]+)[^<]*<b>([^<]+)/);
+                // Settings-Seite: <h1>GERAETE_ID <b id=_msg ...>Status</b>
+                // AppName in <address>...<a...>Home</a> AppName<small>-Variant</small>
+                const match = html.match(/<h1>([^\s<]+)/);
                 if (!match) {
                     reject(new Error('GERAETE_ID nicht in Settings-Seite gefunden'));
                     return;
                 }
-                const geraeteId = match[1];
-                const appName   = match[2] || '';
+                const geraeteId  = match[1];
+                const appMatch   = html.match(/Home<\/a>\s+([^\s<]+)<small>/);
+                const appName    = appMatch ? appMatch[1] : '';
                 log(`GERAETE_ID erkannt: ${geraeteId}  App: ${appName}`);
                 resolve({ geraeteId, appName });
             });
