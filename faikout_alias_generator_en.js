@@ -173,14 +173,11 @@ function fetchDeviceFields(ip) {
         const matches = mainHtml.match(/\bo\.([a-zA-Z]\w*)\b/g) || [];
         const found = new Set(matches.map(m => m.slice(2).toLowerCase()));
 
-        // BLE: only create if bleenable is active
-        const bleEnabled = /id="bleenable"[^>]*checked/.test(extrasHtml);
-        if (bleEnabled && found.has('ble')) {
+        // BLE: create if o.ble is present in main page (autob set, sensor active)
+        if (found.has('ble')) {
             found.add('ble_temp');
             found.add('ble_hum');
             found.add('ble_bat');
-        } else {
-            found.delete('ble');
         }
 
         // Optional features: remove disabled fields from found
